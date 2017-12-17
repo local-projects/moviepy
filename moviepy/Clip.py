@@ -7,14 +7,12 @@ and AudioClip.
 from copy import copy
 import numpy as np
 
-from moviepy.decorators import (apply_to_mask,
-                                apply_to_audio,
-                                requires_duration,
-                                outplace,
-                                convert_to_seconds,
-                                use_clip_fps_by_default)
-from tqdm import tqdm
-import proglog
+from moviepy.decorators import ( apply_to_mask,
+                                 apply_to_audio,
+                                 requires_duration,
+                                 outplace,
+                                 convert_to_seconds,
+                                 use_clip_fps_by_default)
 
 
 class Clip:
@@ -444,7 +442,7 @@ class Clip:
 
     @requires_duration
     @use_clip_fps_by_default
-    def iter_frames(self, fps=None, with_times = False, logger=None,
+    def iter_frames(self, fps=None, with_times = False, progress_bar=None,
                     dtype=None):
         """ Iterates over all the frames of the clip.
 
@@ -469,16 +467,58 @@ class Clip:
         >>> myclip = VideoFileClip('myvideo.mp4')
         >>> print ( [frame[0,:,0].max()
                      for frame in myclip.iter_frames()])
+
+
+        The progress_bar value can either be a bool or a callable, which knows
+        how to handle a response, similarly to tqdm. In fact the handler could
+        just as well be tqdm. An example implementation idea is as follows:
+
+        >>> def progress_tracker(iterable, total=None):
+        >>>     duration = int(total/24)
+
+        >>>     last = 0
+        >>>     for t, frame in iterable:
+        >>>         # first yield so FFMPEG_VideoWriter still has the frames first
+        >>>         yield t, frame
+        >>>         # Then do any progress-notification
+        >>>         current = int(100 * t / duration)
+        >>>         logger.info("MoviePy progress percent: %s" % current)
+
+        Then your caller would just provide this handler:
+
+        >>>    composite.write_videofile(
+        >>>        self.video_file, audio=False, threads=4,
+        >>>        write_logfile=False, verbose=False,
+        >>>        progress_bar=progress_tracker
+        >>>    )
+
+        Similarly, tqdm could be used as your handler as well:
+        >>>     from tqdm import tqdm
+        >>>     ...
+        >>>
+        >>>     composite.write_videofile(
+        >>>         self.video_file, audio=False, threads=4,
+        >>>         write_logfile=False, verbose=False,
+        >>>         progress_bar=tqdm
+        >>>     )
+
         """
-        logger = proglog.default_bar_logger(logger)
-        for t in logger.iter_bar(t=np.arange(0, self.duration, 1.0/fps)):
-            frame = self.get_frame(t)
-            if (dtype is not None) and (frame.dtype != dtype):
-                frame = frame.astype(dtype)
-            if with_times:
-                yield t, frame
-            else:
-                yield frame
+
+        def generator():
+            for t in np.arange(0, self.duration, 1.0/fps):
+                frame = self.get_frame(t)
+                if (dtype is not None) and (frame.dtype != dtype):
+                    frame = frame.astype(dtype)
+                if with_times:
+                    yield t, frame
+                else:
+                    yield frame
+
+        if callable(progress_bar):
+            nframes = int(self.duration*fps)+1
+            return progress_bar(generator(), total=nframes)
+
+        return generator()
 
     def close(self):
         """ 
